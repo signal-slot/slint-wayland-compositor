@@ -1,0 +1,13 @@
+[package]
+name = "minimal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+slint = { workspace = true }
+slint-wayland-compositor = { path = "../.." }
+
+[build-dependencies]
+slint-build = { workspace = true }

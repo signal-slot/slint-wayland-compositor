@@ -1,0 +1,558 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: MIT
+//
+// Derived from demos/launcher of Slint. That launcher starts a demo next to itself, or in
+// its place where there is no windowing system. This one is the windowing system: the demos
+// are Wayland clients whose windows show up in the window of the launcher.
+
+import { Palette } from "std-widgets.slint";
+import { ShellSurfaceItem, WaylandCompositor, WaylandToplevel } from "@wayland_compositor";
+import "assets/Inter-VariableFont.ttf";
+
+export { WaylandCompositor }
+
+export struct LauncherEntry {
+    title: string,
+    description: string,
+}
+
+export global Launcher {
+    in property <[LauncherEntry]> entries;
+    in property <string> status;
+    callback launch(int);
+}
+
+global Style {
+    out property <color> secondary-text: Palette.foreground.transparentize(0.4);
+    out property <color> card: Palette.background.mix(Palette.foreground, 0.88);
+}
+
+component EntryButton inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <bool> selected;
+    callback activated;
+
+    border-radius: 12px;
+    // Mostly opaque, so that the decorative lines of the window background
+    // don't shine through the text.
+    background: (touch.pressed ? Palette.background.mix(Palette.foreground, 0.75)
+        : touch.has-hover ? Palette.background.mix(Palette.foreground, 0.82)
+        : Style.card).with-alpha(0.9);
+    animate background { duration: 150ms; }
+    border-width: root.selected ? 2px : 0;
+    border-color: Palette.accent-background;
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.activated();
+        }
+    }
+
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-action-default => {
+        root.activated();
+    }
+
+    HorizontalLayout {
+        padding: 14px;
+        spacing: 12px;
+
+        VerticalLayout {
+            spacing: 4px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            Text {
+                text: root.title;
+                font-weight: 500;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.description;
+                font-size: 0.82rem;
+                color: Style.secondary-text;
+                overflow: elide;
+            }
+        }
+
+        Text {
+            text: "›";
+            font-size: 1.41rem;
+            color: Style.secondary-text;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component CloseButton inherits Rectangle {
+    callback clicked <=> touch.clicked;
+
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    background: touch.has-hover ? #ee6c4d : #ffffff30;
+
+    Text {
+        text: "×";
+        color: white;
+    }
+
+    touch := TouchArea { }
+}
+
+// The window of a client. It either floats, with a title bar unless the client draws its
+// own, or fills an area, in which case only the active window is to be seen.
+component ClientWindow inherits Rectangle {
+    in property <WaylandToplevel> toplevel;
+    // All windows fill the area, one at a time.
+    in property <bool> fill-mode;
+    // A window that is activated from the list comes to the front as well.
+    property <bool> active: toplevel.activated;
+    changed active => {
+        if root.active {
+            root.raise();
+        }
+    }
+    in property <length> area-x;
+    in property <length> area-y;
+    in property <length> area-width;
+    in property <length> area-height;
+    // Where the window floats.
+    in-out property <length> float-x;
+    in-out property <length> float-y;
+    callback raise();
+
+    // This one fills the area, be it because of the mode or because its client asked.
+    property <bool> fill: root.fill-mode || toplevel.maximized || toplevel.fullscreen;
+    property <length> bar-height: toplevel.server-decorated && !root.fill ? 30px : 0px;
+    // The size to go back to when the window floats again. Windows that never floated
+    // get a size that suits most of the demos.
+    property <length> float-width: 800px;
+    property <length> float-height: 480px;
+
+    function apply-mode() {
+        if root.fill {
+            WaylandCompositor.resize(toplevel.id, root.area-width, root.area-height);
+        } else {
+            WaylandCompositor.resize(toplevel.id, root.float-width, root.float-height);
+        }
+    }
+
+    // Switching between floating and filling moves the frame of the window from where it was
+    // to where it goes, while the client draws in its new size. The content is shown as it
+    // is, clipped to the frame: scaled, it would jump whenever the client delivers the new
+    // size. Without the switch, the frame is what the client draws, and follows a drag at
+    // once.
+    //
+    // A binding, so that the frame in which `fill` changes is part of the transition
+    // already: `changed` handlers run only after that frame.
+    property <bool> settled-fill;
+    property <bool> settling;
+    property <bool> transitioning: root.fill != root.settled-fill || root.settling;
+    property <duration> move-duration: root.transitioning ? 300ms : 0ms;
+
+    // Position and size are all in the coordinates of the window of the launcher, so that
+    // they move together. A window that fills the area is cut to it: one that does not take
+    // the size it is asked for must not cover the list.
+    x: root.fill ? root.area-x : root.float-x;
+    y: root.fill ? root.area-y : root.float-y;
+    width: root.fill ? root.area-width : root.transitioning ? root.float-width : surface.width;
+    height: root.fill ? root.area-height
+        : root.transitioning ? root.float-height + self.bar-height : surface.height + self.bar-height;
+    animate x, y, width, height { duration: root.move-duration; easing: ease-in-out; }
+    clip: root.fill || root.transitioning;
+    background: root.transitioning ? Style.card : transparent;
+
+    // Long enough for the client to have drawn in the new size, and for the size it ends
+    // up with to have been animated to.
+    Timer {
+        interval: 700ms;
+        running: root.settling;
+        triggered => {
+            root.settling = false;
+        }
+    }
+    visible: !root.fill-mode || toplevel.activated;
+    drop-shadow-blur: toplevel.server-decorated && !root.fill ? 24px : 0px;
+    drop-shadow-color: #000000a0;
+
+    // Windows fade in.
+    property <float> appear: 0;
+    opacity: self.appear;
+    animate appear { duration: 250ms; easing: ease-out; }
+    init => {
+        self.settled-fill = self.fill;
+        self.appear = 1;
+        if root.fill-mode {
+            WaylandCompositor.set-fullscreen(toplevel.id, true);
+        }
+        if root.fill {
+            root.apply-mode();
+        }
+    }
+    // Clients drop their decoration for the mode, and get it back when it ends.
+    changed fill-mode => {
+        WaylandCompositor.set-fullscreen(toplevel.id, root.fill-mode);
+    }
+    changed fill => {
+        root.settled-fill = root.fill;
+        root.settling = true;
+        if root.fill {
+            root.float-width = toplevel.width;
+            root.float-height = toplevel.height;
+        }
+        root.apply-mode();
+    }
+    changed area-width => {
+        if root.fill {
+            root.apply-mode();
+        }
+    }
+    changed area-height => {
+        if root.fill {
+            root.apply-mode();
+        }
+    }
+
+    if root.bar-height > 0: Rectangle {
+        y: 0;
+        height: root.bar-height;
+        background: toplevel.activated ? Palette.accent-background : Style.card;
+        animate background { duration: 150ms; }
+
+        TouchArea {
+            moved => {
+                root.float-x += self.mouse-x - self.pressed-x;
+                root.float-y += self.mouse-y - self.pressed-y;
+            }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    surface.activate();
+                    root.raise();
+                }
+            }
+        }
+
+        Text {
+            x: 12px;
+            width: parent.width - 52px;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            overflow: elide;
+            color: toplevel.activated ? Palette.accent-foreground : Palette.foreground;
+            font-weight: 500;
+            text: toplevel.title != "" ? toplevel.title : toplevel.app-id;
+        }
+
+        CloseButton {
+            x: parent.width - self.width - 6px;
+            clicked => {
+                WaylandCompositor.close(toplevel.id);
+            }
+        }
+    }
+
+    surface := ShellSurfaceItem {
+        x: 0;
+        y: root.bar-height;
+        toplevel: root.toplevel;
+        // Move the whole window instead of the item within it.
+        move-enabled: false;
+        dragged(delta-x, delta-y) => {
+            if !root.fill {
+                root.float-x += delta-x;
+                root.float-y += delta-y;
+            }
+        }
+        pressed => {
+            root.raise();
+        }
+    }
+}
+
+// Selects between two ways to show the windows.
+component ModeSwitch inherits Rectangle {
+    in-out property <bool> fill;
+
+    height: 32px;
+    border-radius: 16px;
+    background: Style.card.with-alpha(0.9);
+
+    Rectangle {
+        x: root.fill ? parent.width / 2 : 0;
+        width: parent.width / 2;
+        border-radius: 16px;
+        background: Palette.accent-background;
+        animate x { duration: 200ms; easing: ease-in-out; }
+    }
+
+    HorizontalLayout {
+        for label[index] in ["Windows", "Full screen"]: Rectangle {
+            Text {
+                text: label;
+                font-size: 0.82rem;
+                font-weight: 500;
+                color: (index == 1) == root.fill ? Palette.accent-foreground : Palette.foreground;
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.fill = index == 1;
+                }
+            }
+        }
+    }
+}
+
+// Names a window that fills the area, to switch to it or to close it.
+component WindowTab inherits Rectangle {
+    in property <WaylandToplevel> toplevel;
+
+    width: min(220px, label.preferred-width + 56px);
+    border-radius: 8px;
+    background: toplevel.activated ? Palette.accent-background : touch.has-hover ? Style.card : transparent;
+    animate background { duration: 150ms; }
+
+    touch := TouchArea {
+        clicked => {
+            WaylandCompositor.activate(toplevel.id);
+        }
+    }
+
+    label := Text {
+        x: 12px;
+        width: parent.width - 44px;
+        horizontal-alignment: left;
+        overflow: elide;
+        font-size: 0.82rem;
+        font-weight: 500;
+        color: toplevel.activated ? Palette.accent-foreground : Palette.foreground;
+        text: toplevel.title != "" ? toplevel.title : toplevel.app-id;
+    }
+
+    CloseButton {
+        x: parent.width - self.width - 6px;
+        clicked => {
+            WaylandCompositor.close(toplevel.id);
+        }
+    }
+}
+
+export component LauncherWindow inherits Window {
+    title: "Slint Launcher (" + WaylandCompositor.socket-name + ")";
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    default-font-family: "Inter";
+
+    // Keyboard navigation state: the entry launched with the Return key.
+    property <int> current-item: 0;
+    property <length> item-height: 5rem;
+    property <length> item-spacing: 8px;
+    property <length> list-width: 330px;
+    // Grows with every window that is raised above the others.
+    property <int> top;
+    // The active window fills the space next to the list, instead of all windows floating.
+    in-out property <bool> fill-mode;
+    property <length> area-x: root.list-width + 48px;
+    property <length> tab-height: 44px;
+    // The windows take the whole space next to the list.
+    property <bool> windows-fill: root.fill-mode && WaylandCompositor.toplevels.length > 0;
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    function select(index: int) {
+        if Launcher.entries.length == 0 {
+            return;
+        }
+        current-item = Math.clamp(index, 0, Launcher.entries.length - 1);
+        // Scroll the selected entry into view.
+        if -flick.content-y > item-top(current-item) {
+            flick.content-y = -item-top(current-item);
+        } else if item-top(current-item) + item-height + flick.content-y > flick.height {
+            flick.content-y = flick.height - (item-top(current-item) + item-height);
+        }
+    }
+
+    pure function item-top(index: int) -> length {
+        index * (item-height + item-spacing)
+    }
+
+    forward-focus: key-handler;
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.DownArrow {
+                root.select(root.current-item + 1);
+                return accept;
+            }
+            if event.text == Key.UpArrow {
+                root.select(root.current-item - 1);
+                return accept;
+            }
+            if event.text == Key.Return || event.text == " " {
+                if Launcher.entries.length > 0 {
+                    Launcher.launch(root.current-item);
+                }
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // The decoration behind everything. Small GPUs are slow at filling the screen, so it is
+    // drawn once into a layer instead of in three passes every frame, and only where the
+    // windows do not cover it anyway.
+    Rectangle {
+        x: 0;
+        width: root.windows-fill ? root.area-x : root.width;
+        clip: true;
+
+        Rectangle {
+            x: 0;
+            width: root.width;
+            cache-rendering-hint: true;
+            background: @linear-gradient(180deg, #1C1C1C, black);
+
+            Image {
+                x: root.width - self.width;
+                y: root.height - self.height - root.height * 12%;
+                width: min(root.width * 0.36, 420px);
+                source: @image-url("assets/bg-frame-mark.svg");
+            }
+
+            Image {
+                x: 0px;
+                y: root.height - self.height;
+                width: root.width;
+                source: @image-url("assets/bg-frame-lines.svg");
+            }
+        }
+    }
+
+    VerticalLayout {
+        x: 0;
+        width: root.list-width + 24px;
+        padding-left: 24px;
+        padding-top: 24px;
+        padding-bottom: 24px;
+        spacing: 16px;
+
+        VerticalLayout {
+            spacing: 8px;
+
+            Text {
+                text: "Welcome to";
+                font-size: 1.41rem;
+                font-weight: 100;
+                opacity: 0.9;
+            }
+
+            Text {
+                text: "Slint Demos & Examples";
+                font-size: 1.41rem;
+                font-weight: 400;
+            }
+
+            Text {
+                text: "Every one of them is a Wayland client of this window.";
+                font-size: 0.82rem;
+                color: Style.secondary-text;
+                wrap: word-wrap;
+            }
+        }
+
+        ModeSwitch {
+            fill <=> root.fill-mode;
+        }
+
+        flick := Flickable {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                alignment: start;
+                spacing: root.item-spacing;
+
+                for entry[index] in Launcher.entries: EntryButton {
+                    height: root.item-height;
+                    title: entry.title;
+                    description: entry.description;
+                    selected: key-handler.has-focus && index == root.current-item;
+                    activated => {
+                        root.select(index);
+                        Launcher.launch(index);
+                    }
+                }
+
+                if Launcher.entries.length == 0: Text {
+                    text: "No demos or examples were found in PATH.";
+                    color: Style.secondary-text;
+                }
+            }
+        }
+
+        Text {
+            text: Launcher.status != "" ? Launcher.status
+                : WaylandCompositor.socket-name + "  ·  " + WaylandCompositor.toplevels.length + (WaylandCompositor.toplevels.length == 1 ? " client window" : " client windows");
+            font-size: 0.82rem;
+            color: Style.secondary-text;
+            wrap: word-wrap;
+        }
+    }
+
+    // What the windows fill in full screen mode, with a tab for each of them on top.
+    if root.windows-fill: Rectangle {
+        x: root.area-x;
+        width: root.width - self.x;
+        background: black;
+
+        HorizontalLayout {
+            y: 0;
+            height: root.tab-height;
+            padding: 6px;
+            spacing: 6px;
+            alignment: start;
+
+            for toplevel in WaylandCompositor.toplevels: WindowTab {
+                toplevel: toplevel;
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+
+        for toplevel[index] in WaylandCompositor.toplevels: ClientWindow {
+            property <int> order;
+
+            float-x: root.list-width + 64px + Math.mod(index, 6) * 40px;
+            float-y: 40px + Math.mod(index, 6) * 40px;
+            z: self.order;
+            toplevel: toplevel;
+            fill-mode: root.fill-mode;
+            // A window that is maximized on its own leaves the list alone as well. The tabs
+            // are there in full screen mode only.
+            area-x: root.area-x;
+            area-y: root.fill-mode ? root.tab-height : 0;
+            area-width: root.width - self.area-x;
+            area-height: root.height - self.area-y;
+            raise => {
+                root.top += 1;
+                self.order = root.top;
+            }
+            init => {
+                root.top += 1;
+                self.order = root.top;
+            }
+        }
+    }
+}

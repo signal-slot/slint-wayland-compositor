@@ -1,0 +1,52 @@
+[workspace]
+members = [".", "examples/minimal", "examples/launcher"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/signal-slot/slint-wayland-compositor"
+
+[workspace.dependencies]
+slint = "1.18"
+slint-build = { version = "1.18", features = ["experimental-module-builds"] }
+
+[package]
+name = "slint-wayland-compositor"
+links = "wayland_compositor"
+description = "Write Wayland compositors in Slint, in the spirit of Qt Quick Wayland Compositor"
+readme = "README.md"
+keywords = ["slint", "wayland", "compositor", "gui", "embedded"]
+categories = ["gui"]
+include = ["/src", "/ui", "/tests", "/build.rs", "/README.md", "/LICENSE"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+## Show the GPU buffers of clients whose driver hands them over with a protocol of its own
+## (`EGL_WL_bind_wayland_display`), like the drivers of Vivante GPUs do. This links to the
+## system's libwayland-server, which is what such a driver talks to.
+bind-wayland-display = ["smithay/use_system_lib"]
+
+[dependencies]
+slint = { workspace = true }
+smithay = { version = "0.7", default-features = false, features = ["wayland_frontend", "desktop", "backend_egl", "backend_drm", "renderer_gl"] }
+async-io = "2"
+libc = "0.2"
+
+[dev-dependencies]
+i-slint-backend-testing = "1.18"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+
+# One process can set up the Slint testing backend only once, and everything has to happen on
+# the thread of the event loop, so the tests bring their own runner.
+[[test]]
+name = "protocol"
+harness = false
+
+[build-dependencies]
+slint-build = { workspace = true }

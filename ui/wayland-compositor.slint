@@ -1,0 +1,384 @@
+// The Slint side of slint-wayland-compositor.
+//
+// import { ShellSurfaceItem, WaylandCompositor } from "@wayland_compositor";
+
+// One surface of a toplevel: its main surface, a subsurface or a popup.
+export struct WaylandView {
+    // Position relative to the top left corner of the toplevel.
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    image: image,
+    // The surface belongs to a popup like a menu, and not to the window itself.
+    popup: bool,
+}
+
+// A window of a client.
+export struct WaylandToplevel {
+    // Identifies the toplevel in the callbacks of WaylandCompositor.
+    id: int,
+    // The process of the client, zero if it is not known.
+    pid: int,
+    title: string,
+    app-id: string,
+    // Size of the window without shadows.
+    width: length,
+    height: length,
+    // The toplevel is the one that got activated last.
+    activated: bool,
+    // The client agreed to not draw a title bar and borders itself.
+    server-decorated: bool,
+    // The user is dragging the window around at the request of the client.
+    moving: bool,
+    // The client or the UI want the toplevel to fill what the screen has to offer. It is
+    // up to the UI to place it and to ask for that size with WaylandCompositor.resize().
+    maximized: bool,
+    // The same for filling the screen without decoration.
+    fullscreen: bool,
+    // The client or the UI want the toplevel out of sight until it is activated again.
+    minimized: bool,
+    // The user is resizing the window at the request of the client.
+    resizing: bool,
+    // The edges that are dragged meanwhile: 1 top, 2 bottom, 4 left, 8 right, and their
+    // sums. ShellSurfaceItem keeps the opposite edges where they are.
+    resize-edges: int,
+    // The area in which pointer events are of interest: the window and its popups.
+    input-x: length,
+    input-y: length,
+    input-width: length,
+    input-height: length,
+    // What to show, bottom most first.
+    views: [WaylandView],
+}
+
+// The compositor. Its Rust counterpart is connected with Compositor::bind().
+export global WaylandCompositor {
+    // The value of WAYLAND_DISPLAY with which clients reach the compositor.
+    in property <string> socket-name;
+    // The windows of all clients, oldest first.
+    in property <[WaylandToplevel]> toplevels;
+    // What clients want the pointer to look like while it is over a toplevel: the CSS
+    // name of a pointer ("none" for no pointer), or nothing when it is cursor-image.
+    in property <string> cursor-name: "default";
+    in property <image> cursor-image;
+    // The pixel of the image that is where the pointer is.
+    in property <length> cursor-hotspot-x;
+    in property <length> cursor-hotspot-y;
+    in property <length> cursor-width;
+    in property <length> cursor-height;
+
+    // Makes a toplevel the active one, which is where key events go.
+    callback activate(id: int);
+    // Asks the client to close a toplevel.
+    callback close(id: int);
+    // Asks the client to give a toplevel this size. A size of zero leaves it to the client.
+    callback resize(id: int, width: length, height: length);
+    // Tells the client that a toplevel fills the screen, upon which clients usually drop
+    // their decoration. The size to fill is asked for with resize().
+    callback set-fullscreen(id: int, fullscreen: bool);
+    // The same for a toplevel that is maximized, which keeps its decoration.
+    callback set-maximized(id: int, maximized: bool);
+    // Sets what WaylandToplevel.minimized says. Activating the toplevel clears it.
+    callback set-minimized(id: int, minimized: bool);
+    // Starts a program as a client of the compositor. The arguments reach the program as
+    // they are.
+    callback launch-program(program: string, arguments: [string]);
+    // Starts a shell command line as a client of the compositor. The shell interprets all
+    // of it: only pass what the application itself made up, never text from elsewhere.
+    callback launch-shell-command(command: string);
+
+    // Input, as ShellSurfaceItem forwards it. Positions are relative to the toplevel,
+    // buttons are Linux input event codes, text is that of a KeyEvent.
+    callback pointer-moved(id: int, x: length, y: length);
+    callback pointer-left();
+    callback pointer-button(button: int, pressed: bool);
+    callback pointer-scrolled(delta-x: length, delta-y: length);
+    callback key(text: string, pressed: bool);
+    // The item that shows a toplevel is at this position in the window. This is what lets
+    // something that is dragged out of one toplevel arrive in another.
+    callback item-moved(id: int, x: length, y: length);
+    // The keyboard is busy elsewhere from now on: no key is down anymore.
+    callback keys-released();
+    // The pointer moved while the toplevel is resizing. The distance is how far the
+    // pointer is from where the button went down.
+    callback resize-dragged(id: int, delta-x: length, delta-y: length);
+}
+
+// Shows a toplevel and lets the user interact with it.
+//
+// The item has the size of the toplevel. It takes the keyboard focus when it is clicked,
+// follows the pointer when the client asks for the window to be moved, and keeps the
+// edges in place that are not dragged when the client asks for the window to be resized.
+// Maximized, fullscreen and minimized toplevels are for the user of the item to deal with.
+export component ShellSurfaceItem {
+    in property <WaylandToplevel> toplevel;
+    // Take the keyboard focus and activate the toplevel as soon as it shows up.
+    in property <bool> focus-on-create: true;
+    // Follow the pointer when the client asks for the window to be moved, which is what
+    // dragging a title bar drawn by the client does.
+    in property <bool> move-enabled: true;
+    out property <bool> has-focus: scope.has-focus;
+
+    // The user pressed a button on the toplevel, which is a good moment to raise it.
+    callback pressed();
+    // The item is to be moved by this much: the client wants the window to be moved with
+    // the pointer, or its top left corner moves as the window is resized.
+    callback dragged(delta-x: length, delta-y: length);
+
+    // The toplevel got activated by something else than this item, which then takes the
+    // keyboard for it.
+    property <bool> activated: toplevel.activated;
+    changed activated => {
+        if root.activated && !scope.has-focus {
+            scope.focus();
+        }
+    }
+
+    // Where in the window the button went down. Unlike the position in the item, this
+    // does not change when the item moves under the pointer.
+    property <length> press-x;
+    property <length> press-y;
+    property <length> last-width;
+    property <length> last-height;
+    property <length> window-x: root.absolute-position.x;
+    property <length> window-y: root.absolute-position.y;
+    changed window-x => {
+        WaylandCompositor.item-moved(root.toplevel.id, root.window-x, root.window-y);
+    }
+    changed window-y => {
+        WaylandCompositor.item-moved(root.toplevel.id, root.window-x, root.window-y);
+    }
+
+    function shift(delta-x: length, delta-y: length) {
+        root.dragged(delta-x, delta-y);
+        if root.move-enabled {
+            root.x += delta-x;
+            root.y += delta-y;
+        }
+    }
+
+    // The pointers Slint has, by the names CSS and Wayland have for them.
+    pure function cursor(name: string) -> MouseCursor {
+        if name == "" || name == "none" {
+            return MouseCursor.none;
+        }
+        if name == "help" || name == "context-menu" {
+            return MouseCursor.help;
+        }
+        if name == "pointer" {
+            return MouseCursor.pointer;
+        }
+        if name == "progress" {
+            return MouseCursor.progress;
+        }
+        if name == "wait" {
+            return MouseCursor.wait;
+        }
+        if name == "crosshair" || name == "cell" {
+            return MouseCursor.crosshair;
+        }
+        if name == "text" || name == "vertical-text" {
+            return MouseCursor.text;
+        }
+        if name == "alias" {
+            return MouseCursor.alias;
+        }
+        if name == "copy" {
+            return MouseCursor.copy;
+        }
+        if name == "move" || name == "all-scroll" || name == "all-resize" {
+            return MouseCursor.move;
+        }
+        if name == "no-drop" {
+            return MouseCursor.no-drop;
+        }
+        if name == "not-allowed" {
+            return MouseCursor.not-allowed;
+        }
+        if name == "grab" {
+            return MouseCursor.grab;
+        }
+        if name == "grabbing" {
+            return MouseCursor.grabbing;
+        }
+        if name == "col-resize" {
+            return MouseCursor.col-resize;
+        }
+        if name == "row-resize" {
+            return MouseCursor.row-resize;
+        }
+        if name == "n-resize" {
+            return MouseCursor.n-resize;
+        }
+        if name == "e-resize" {
+            return MouseCursor.e-resize;
+        }
+        if name == "s-resize" {
+            return MouseCursor.s-resize;
+        }
+        if name == "w-resize" {
+            return MouseCursor.w-resize;
+        }
+        if name == "ne-resize" {
+            return MouseCursor.ne-resize;
+        }
+        if name == "nw-resize" {
+            return MouseCursor.nw-resize;
+        }
+        if name == "se-resize" {
+            return MouseCursor.se-resize;
+        }
+        if name == "sw-resize" {
+            return MouseCursor.sw-resize;
+        }
+        if name == "ew-resize" {
+            return MouseCursor.ew-resize;
+        }
+        if name == "ns-resize" {
+            return MouseCursor.ns-resize;
+        }
+        if name == "nesw-resize" {
+            return MouseCursor.nesw-resize;
+        }
+        if name == "nwse-resize" {
+            return MouseCursor.nwse-resize;
+        }
+        return MouseCursor.default;
+    }
+
+    public function activate() {
+        scope.focus();
+        WaylandCompositor.activate(root.toplevel.id);
+    }
+
+    // Linux input event codes: BTN_LEFT and friends.
+    function button-code(button: PointerEventButton) -> int {
+        if button == PointerEventButton.left {
+            return 272;
+        }
+        if button == PointerEventButton.right {
+            return 273;
+        }
+        if button == PointerEventButton.middle {
+            return 274;
+        }
+        if button == PointerEventButton.forward {
+            return 277;
+        }
+        if button == PointerEventButton.back {
+            return 278;
+        }
+        return 0;
+    }
+
+    width: toplevel.width;
+    height: toplevel.height;
+    forward-focus: scope;
+
+    init => {
+        root.last-width = root.width;
+        root.last-height = root.height;
+        WaylandCompositor.item-moved(root.toplevel.id, root.window-x, root.window-y);
+        if root.focus-on-create {
+            root.activate();
+        }
+    }
+
+    // A window that is resized by its left or top edge grows to the left or to the top.
+    changed width => {
+        if root.toplevel.resize-edges == 4 || root.toplevel.resize-edges == 5 || root.toplevel.resize-edges == 6 {
+            root.shift(root.last-width - root.width, 0);
+        }
+        root.last-width = root.width;
+    }
+    changed height => {
+        if root.toplevel.resize-edges == 1 || root.toplevel.resize-edges == 5 || root.toplevel.resize-edges == 9 {
+            root.shift(0, root.last-height - root.height);
+        }
+        root.last-height = root.height;
+    }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            // Clients repeat keys on their own.
+            if !event.repeat {
+                WaylandCompositor.key(event.text, true);
+            }
+            return accept;
+        }
+        key-released(event) => {
+            WaylandCompositor.key(event.text, false);
+            return accept;
+        }
+        // Nobody tells when the keys that are down are released from here on.
+        changed has-focus => {
+            if !self.has-focus {
+                WaylandCompositor.keys-released();
+            }
+        }
+    }
+
+    for view in root.toplevel.views: Image {
+        x: view.x;
+        y: view.y;
+        width: view.width;
+        height: view.height;
+        source: view.image;
+        image-fit: fill;
+    }
+
+    input := TouchArea {
+        x: root.toplevel.input-x;
+        y: root.toplevel.input-y;
+        width: root.toplevel.input-width;
+        height: root.toplevel.input-height;
+        mouse-cursor: root.cursor(WaylandCompositor.cursor-name);
+
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.move {
+                if root.toplevel.moving {
+                    root.shift(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
+                } else if root.toplevel.resizing {
+                    WaylandCompositor.resize-dragged(root.toplevel.id, self.absolute-position.x + self.mouse-x - root.press-x, self.absolute-position.y + self.mouse-y - root.press-y);
+                } else {
+                    WaylandCompositor.pointer-moved(root.toplevel.id, self.x + self.mouse-x, self.y + self.mouse-y);
+                }
+            } else if event.kind == PointerEventKind.down {
+                root.activate();
+                root.pressed();
+                root.press-x = self.absolute-position.x + self.mouse-x;
+                root.press-y = self.absolute-position.y + self.mouse-y;
+                WaylandCompositor.pointer-moved(root.toplevel.id, self.x + self.mouse-x, self.y + self.mouse-y);
+                if root.button-code(event.button) != 0 {
+                    WaylandCompositor.pointer-button(root.button-code(event.button), true);
+                }
+            } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                if root.button-code(event.button) != 0 {
+                    WaylandCompositor.pointer-button(root.button-code(event.button), false);
+                }
+            }
+        }
+
+        scroll-event(event) => {
+            WaylandCompositor.pointer-scrolled(event.delta-x, event.delta-y);
+            return accept;
+        }
+
+        changed has-hover => {
+            if !self.has-hover {
+                WaylandCompositor.pointer-left();
+            }
+        }
+    }
+
+    // The pointer as the client draws it.
+    if input.has-hover && WaylandCompositor.cursor-name == "" && !root.toplevel.moving && !root.toplevel.resizing: Image {
+        x: input.x + input.mouse-x - WaylandCompositor.cursor-hotspot-x;
+        y: input.y + input.mouse-y - WaylandCompositor.cursor-hotspot-y;
+        width: WaylandCompositor.cursor-width;
+        height: WaylandCompositor.cursor-height;
+        source: WaylandCompositor.cursor-image;
+        image-fit: fill;
+    }
+}

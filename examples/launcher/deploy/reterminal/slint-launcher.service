@@ -1,0 +1,28 @@
+[Unit]
+Description=Slint demo launcher, a Wayland compositor written with Slint
+After=systemd-user-sessions.service systemd-udev-trigger.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+User=pi
+Group=pi
+SupplementaryGroups=video render input
+RuntimeDirectory=slint-launcher
+RuntimeDirectoryMode=0700
+Environment=XDG_RUNTIME_DIR=/run/slint-launcher
+Environment=SLINT_BACKEND=linuxkms-skia-opengl
+# The panel is 720x1280; this is the landscape the case is made for.
+Environment=SLINT_KMS_ROTATION=90
+ExecStart=/opt/slint-demo/launcher
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,244 @@
+import { ShellSurfaceItem, WaylandCompositor, WaylandToplevel } from "@wayland_compositor";
+export { WaylandCompositor }
+
+// A window: the toplevel of a client, with a title bar unless the client draws its own.
+component Frame inherits Rectangle {
+    in property <WaylandToplevel> toplevel;
+    // What a maximized window gets, and what a fullscreen one gets.
+    in property <length> desk-width;
+    in property <length> desk-height;
+    in property <length> screen-height;
+    callback raise();
+
+    property <length> bar-height: toplevel.server-decorated && !toplevel.fullscreen ? 28px : 0px;
+    // The client or the title bar want the window to be as large as it gets.
+    property <bool> filling: toplevel.maximized || toplevel.fullscreen;
+    property <length> fill-height: toplevel.fullscreen ? root.screen-height : root.desk-height;
+    property <bool> active: toplevel.activated;
+    // Where to go back to.
+    property <length> floating-x;
+    property <length> floating-y;
+    property <length> floating-width;
+    property <length> floating-height;
+
+    function fill() {
+        if root.filling {
+            WaylandCompositor.resize(toplevel.id, root.desk-width, root.fill-height - root.bar-height);
+        } else {
+            // Nothing to go back to leaves the size to the client.
+            WaylandCompositor.resize(toplevel.id, root.floating-width, root.floating-height);
+        }
+    }
+
+    init => {
+        if root.filling {
+            root.floating-x = root.x;
+            root.floating-y = root.y;
+            root.x = 0;
+            root.y = 0;
+            root.fill();
+        }
+    }
+    changed filling => {
+        if root.filling {
+            root.floating-x = root.x;
+            root.floating-y = root.y;
+            root.floating-width = toplevel.width;
+            root.floating-height = toplevel.height;
+            root.x = 0;
+            root.y = 0;
+        } else {
+            root.x = root.floating-x;
+            root.y = root.floating-y;
+        }
+        root.fill();
+    }
+    changed desk-width => {
+        if root.filling {
+            root.fill();
+        }
+    }
+    changed fill-height => {
+        if root.filling {
+            root.fill();
+        }
+    }
+    // Windows that are activated from the task bar come to the front as well.
+    changed active => {
+        if root.active {
+            root.raise();
+        }
+    }
+
+    visible: !toplevel.minimized;
+
+    width: surface.width;
+    height: surface.height + self.bar-height;
+    drop-shadow-blur: toplevel.server-decorated ? 16px : 0px;
+    drop-shadow-color: #00000080;
+
+    if toplevel.server-decorated: Rectangle {
+        y: 0;
+        height: root.bar-height;
+        background: toplevel.activated ? #3d5a80 : #555b66;
+
+        TouchArea {
+            moved => {
+                root.x += self.mouse-x - self.pressed-x;
+                root.y += self.mouse-y - self.pressed-y;
+            }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    surface.activate();
+                    root.raise();
+                }
+            }
+        }
+
+        Text {
+            x: 10px;
+            width: parent.width - 96px;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            overflow: elide;
+            color: white;
+            text: toplevel.title != "" ? toplevel.title : toplevel.app-id;
+        }
+
+        for button[index] in ["–", "□"]: Rectangle {
+            x: parent.width - self.width - 54px + index * 24px;
+            width: 18px;
+            height: 18px;
+            border-radius: 9px;
+            background: control.has-hover ? #98c1d9 : #ffffff40;
+
+            Text {
+                text: button;
+                color: white;
+            }
+
+            control := TouchArea {
+                clicked => {
+                    if index == 0 {
+                        WaylandCompositor.set-minimized(toplevel.id, true);
+                    } else {
+                        WaylandCompositor.set-maximized(toplevel.id, !toplevel.maximized);
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            x: parent.width - self.width - 6px;
+            width: 18px;
+            height: 18px;
+            border-radius: 9px;
+            background: close.has-hover ? #ee6c4d : #ffffff40;
+
+            Text {
+                text: "×";
+                color: white;
+            }
+
+            close := TouchArea {
+                clicked => {
+                    WaylandCompositor.close(toplevel.id);
+                }
+            }
+        }
+    }
+
+    surface := ShellSurfaceItem {
+        x: 0;
+        y: root.bar-height;
+        toplevel: root.toplevel;
+        // Move the frame instead of the item within the frame.
+        move-enabled: false;
+        dragged(delta-x, delta-y) => {
+            root.x += delta-x;
+            root.y += delta-y;
+        }
+        pressed => {
+            root.raise();
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    // Grows with every window that is raised above the others.
+    property <int> top;
+
+    title: "Slint Wayland Compositor (" + WaylandCompositor.socket-name + ")";
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    background: @linear-gradient(160deg, #293241 0%, #3d5a80 100%);
+
+    for toplevel[index] in WaylandCompositor.toplevels: Frame {
+        property <int> order;
+
+        x: 48px + Math.mod(index, 8) * 36px;
+        y: 48px + Math.mod(index, 8) * 36px;
+        z: toplevel.fullscreen ? 2000000 : self.order;
+        toplevel: toplevel;
+        desk-width: root.width;
+        desk-height: root.height - 44px;
+        screen-height: root.height;
+        raise => {
+            root.top += 1;
+            self.order = root.top;
+        }
+    }
+
+    Rectangle {
+        y: parent.height - self.height;
+        z: 1000000;
+        height: 44px;
+        background: #000000a0;
+
+        HorizontalLayout {
+            padding: 6px;
+            spacing: 6px;
+            alignment: start;
+
+            for command in ["weston-terminal", "konsole"]: Rectangle {
+                width: label.preferred-width + 24px;
+                border-radius: 4px;
+                background: launch.has-hover ? #ffffff40 : #ffffff20;
+
+                label := Text {
+                    text: command;
+                    color: white;
+                }
+
+                launch := TouchArea {
+                    clicked => {
+                        WaylandCompositor.launch-program(command, []);
+                    }
+                }
+            }
+
+            // The task bar, which is where minimized windows come back from.
+            for toplevel in WaylandCompositor.toplevels: Rectangle {
+                width: min(160px, task.preferred-width + 24px);
+                border-radius: 4px;
+                border-width: toplevel.activated && !toplevel.minimized ? 1px : 0px;
+                border-color: #98c1d9;
+                background: activate.has-hover ? #ffffff40 : #ffffff20;
+                opacity: toplevel.minimized ? 0.6 : 1;
+
+                task := Text {
+                    width: parent.width - 16px;
+                    overflow: elide;
+                    text: toplevel.title != "" ? toplevel.title : toplevel.app-id;
+                    color: white;
+                }
+
+                activate := TouchArea {
+                    clicked => {
+                        WaylandCompositor.activate(toplevel.id);
+                    }
+                }
+            }
+        }
+    }
+}

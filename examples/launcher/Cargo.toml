@@ -1,0 +1,25 @@
+[package]
+name = "launcher"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+publish = false
+description = "The Slint demo launcher as a Wayland compositor: the demos it starts show up inside its window"
+
+[features]
+## Own the screen, without a windowing system: `SLINT_BACKEND=linuxkms`
+backend-linuxkms = ["slint/backend-linuxkms"]
+## The same without libseat, for when the launcher runs as root
+backend-linuxkms-noseat = ["slint/backend-linuxkms-noseat"]
+
+## Render with Skia: `SLINT_BACKEND=linuxkms-skia-opengl`. Much faster than FemtoVG on small GPUs.
+renderer-skia = ["slint/renderer-skia"]
+## Show the GPU buffers of clients on drivers with a protocol of their own, like Vivante's
+bind-wayland-display = ["slint-wayland-compositor/bind-wayland-display"]
+
+[dependencies]
+slint = { workspace = true }
+slint-wayland-compositor = { path = "../.." }
+
+[build-dependencies]
+slint-build = { workspace = true }

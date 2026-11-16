@@ -1,0 +1,2 @@
+# SLINT_KMS_ROTATION rotates what Slint draws, not where touches are: libinput does that.
+ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="seeed-tp", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"

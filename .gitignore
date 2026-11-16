@@ -1,0 +1,5 @@
+target
+.vscode/
+# Recordings and captures made while developing
+/demo*.mp4
+/stm32mp257f-dk.jpg
