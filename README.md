@@ -65,7 +65,7 @@ system on Slint's linuxkms backend, see its README.
   `bind-wayland-display` feature the protocol of drivers that have their own (Vivante).
 - An output that follows the size and scale of the Slint window.
 
-Tested with Slint 1.18 on a desktop, and without a windowing system on:
+Tested with Slint 1.19 on a desktop, and without a windowing system on:
 
 | Board | GPU | Result |
 |---|---|---|

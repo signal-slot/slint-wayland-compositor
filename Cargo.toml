@@ -9,8 +9,8 @@ license = "MIT"
 repository = "https://github.com/signal-slot/slint-wayland-compositor"
 
 [workspace.dependencies]
-slint = "1.18"
-slint-build = { version = "1.18", features = ["experimental-module-builds"] }
+slint = "1.19"
+slint-build = { version = "1.19", features = ["experimental-module-builds"] }
 
 [package]
 name = "slint-wayland-compositor"
@@ -38,7 +38,7 @@ async-io = "2"
 libc = "0.2"
 
 [dev-dependencies]
-i-slint-backend-testing = "1.18"
+i-slint-backend-testing = "1.19"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 

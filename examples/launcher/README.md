@@ -37,10 +37,6 @@ the board, and start the launcher there with `SLINT_BACKEND=linuxkms-skia-opengl
 systemd unit that runs it on `tty1` with the panel rotated to landscape, and a udev rule that
 rotates the touches to match. The binaries go to `/opt/slint-demo`.
 
-With Slint 1.18, FemtoVG draws conic gradients turned by a quarter, which puts the red sector
-of the Speedometer demo away from its needle. Build that demo with Skia
-(`--features slint/renderer-skia`) until Slint 1.19, which has the fix.
-
 ## Assets
 
 - `src/` and `ui/launcher.slint` are derived from `demos/launcher` of Slint (MIT).

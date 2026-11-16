@@ -74,6 +74,9 @@ component Frame inherits Rectangle {
 
     width: surface.width;
     height: surface.height + self.bar-height;
+    // A shadow is cast by the background, not by the children: the window's own surface
+    // covers it, and windows that draw their own decoration bring their own shadow.
+    background: toplevel.server-decorated ? #555b66 : transparent;
     drop-shadow-blur: toplevel.server-decorated ? 16px : 0px;
     drop-shadow-color: #00000080;
 

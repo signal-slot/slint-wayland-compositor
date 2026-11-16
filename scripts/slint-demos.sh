@@ -27,8 +27,15 @@ if [ "$1" = "--bevy" ]; then
 fi
 
 slint=${SLINT_DIR:-$repo/target/slint}
-if [ ! -d "$slint" ]; then
-    git clone --depth 1 --branch "${SLINT_REF:-v1.18.1}" https://github.com/slint-ui/slint "$slint"
+if [ -z "$SLINT_DIR" ]; then
+    ref=${SLINT_REF:-v1.19.0}
+    if [ ! -d "$slint" ]; then
+        git clone --depth 1 --branch "$ref" https://github.com/slint-ui/slint "$slint"
+    elif [ "$(git -C "$slint" describe --tags --exact-match 2>/dev/null)" != "$ref" ]; then
+        # A checkout of another release, from before the library moved on.
+        git -C "$slint" fetch --depth 1 origin tag "$ref"
+        git -C "$slint" checkout -q "$ref"
+    fi
 fi
 
 # In Slint, demos/ and examples/ are workspaces of their own.
@@ -45,8 +52,8 @@ build() { # <workspace> <packages...>
     fi
 }
 EXTRA="$*"
-build demos printerdemo energy-monitor home-automation
-build examples gallery memory slide_puzzle
+build demos printerdemo energy-monitor home-automation usecases
+build examples gallery memory slide_puzzle carousel speedometer
 if [ -n "$bevy" ]; then
     # On its own: built together with the others, cargo gives it their Bevy features, among
     # them a second winit event loop, which it panics about at startup.

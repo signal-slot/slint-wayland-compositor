@@ -110,6 +110,7 @@ This relies on the `experimental-module-builds` feature of slint-build, in the l
 - `Compositor::spawn_program()` and `WaylandCompositor.launch-program()` start a program with arguments. `spawn_shell_command()` and `launch-shell-command()` run a shell command line and are named for it: they are for text the application made up itself.
 
 - `.slint` has no hexadecimal number literals, and a component must be declared before the component that uses it.
+- `cargo update` may resolve bindgen (built for Skia) with syn 3 and prettyplease 0.2, which do not fit together and break `--all-features`. The lock file has prettyplease 0.3; keep it there.
 - The user's global git ignore contains `build`: a directory of that name is silently not tracked.
 - `examples/launcher` is derived from `demos/launcher` of Slint and carries its copyright header. The font and the background images in `ui/assets` come from the Slint repository; see the README there. The images are brand material of Slint (CC-BY-ND-4.0): they stay byte for byte what they are in Slint.
 
